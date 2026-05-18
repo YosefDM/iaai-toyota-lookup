@@ -1,3 +1,92 @@
+/* ── Inline tile (detail page) — inherits IAAI's .tile look + red accent ──── */
+.itl-tile {
+  border-top: 3px solid #eb0a1e !important;
+}
+.itl-tile .itl-tile-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fdecee !important;
+  padding: 6px 15px !important;
+}
+.itl-tile .itl-tile-header .data-title {
+  color: #c40918 !important;
+}
+.itl-tile .itl-timer {
+  margin-left: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c40918;
+  background: #fff;
+  border: 1px solid #f5c6cb;
+  padding: 1px 7px;
+  border-radius: 9px;
+  letter-spacing: .4px;
+  min-width: 62px;
+  text-align: center;
+}
+.itl-tile .itl-mono {
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.5px;
+}
+.itl-tile .itl-section-divider {
+  border-top: 1px solid #eee;
+  margin: 10px 0;
+}
+.itl-tile .itl-subhead {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+  margin: 0 0 6px;
+}
+.itl-tile .itl-options {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.itl-tile .itl-option {
+  display: flex;
+  gap: 9px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f1f1;
+  align-items: baseline;
+}
+.itl-tile .itl-option:last-child { border-bottom: none; }
+.itl-option-code {
+  flex-shrink: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #eb0a1e;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  min-width: 30px;
+  text-align: center;
+  line-height: 1.3;
+}
+.itl-option-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #222;
+}
+.itl-tile .itl-error {
+  background: #fff0f0;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: #b00020;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.itl-tile .itl-progress { gap: 6px; margin-top: 2px; }
+.itl-tile .itl-step     { font-size: 13px; }
+.itl-tile .itl-vin-slot:not(:empty) { margin-bottom: 10px; }
+
 /* ── Lookup button ─────────────────────────────────────────────────────────── */
 .itl-btn {
   display: inline-flex;
@@ -41,6 +130,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   padding: 11px 14px;
   background: #eb0a1e;
   color: #fff;
@@ -49,6 +139,18 @@
   font-size: 14px;
   position: sticky;
   top: 0;
+}
+.itl-timer {
+  margin-left: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255,255,255,.18);
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: .5px;
+  min-width: 70px;
+  text-align: center;
 }
 
 .itl-close {

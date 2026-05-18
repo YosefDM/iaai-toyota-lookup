@@ -60,7 +60,11 @@
   function showLoading(anchor) {
     removePanel();
     const p = mkPanel(`
-      <div class="itl-head">Toyota Specs Lookup <button class="itl-close">✕</button></div>
+      <div class="itl-head">
+        <span>Toyota Specs Lookup</span>
+        <span class="itl-timer">0.000s</span>
+        <button class="itl-close">✕</button>
+      </div>
       <div class="itl-body">
         <div class="itl-vin-slot"></div>
         <div class="itl-progress">
@@ -75,6 +79,21 @@
     place(p, anchor);
     p.querySelector('.itl-close').onclick = removePanel;
     document.body.appendChild(p);
+
+    // Live elapsed-time counter (updates every ~50ms).
+    const start = performance.now();
+    const timerEl = p.querySelector('.itl-timer');
+    p._timerId = setInterval(() => {
+      const ms = performance.now() - start;
+      timerEl.textContent = (ms / 1000).toFixed(3) + 's';
+    }, 50);
+    p._stopTimer = () => {
+      if (p._timerId) { clearInterval(p._timerId); p._timerId = null; }
+      const ms = performance.now() - start;
+      timerEl.textContent = (ms / 1000).toFixed(3) + 's';
+      return ms;
+    };
+
     return p;
   }
 
@@ -104,7 +123,7 @@
     }
   }
 
-  function showResult(resp, anchor) {
+  function showResult(resp, anchor, elapsedMs) {
     removePanel();
     let body = '';
 
@@ -123,8 +142,15 @@
         : renderSpecs(specs);
     }
 
+    const timerHtml = elapsedMs != null
+      ? `<span class="itl-timer">${(elapsedMs / 1000).toFixed(3)}s</span>`
+      : '';
     const p = mkPanel(`
-      <div class="itl-head">Toyota Factory Specs <button class="itl-close">✕</button></div>
+      <div class="itl-head">
+        <span>Toyota Factory Specs</span>
+        ${timerHtml}
+        <button class="itl-close">✕</button>
+      </div>
       <div class="itl-body">${body}</div>`);
 
     p.querySelector('.itl-close').onclick = removePanel;
@@ -179,7 +205,124 @@
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ── Lookup ────────────────────────────────────────────────────────────────
+  // ── Inline tile (detail page) ─────────────────────────────────────────────
+  // Uses IAAI's own .tile/.tile--data/.data-list classes so it inherits the
+  // native look — we just add .itl-tile for a red accent that signals it's ours.
+
+  function makeInlineTile() {
+    const tile = document.createElement('div');
+    tile.className = 'tile tile--data itl-tile';
+    tile.innerHTML = `
+      <div class="tile-header itl-tile-header">
+        <h2 class="data-title">Toyota Factory Specs</h2>
+        <span class="itl-timer">0.000s</span>
+      </div>
+      <div class="tile-body itl-tile-body">
+        <div class="itl-vin-slot"></div>
+        <div class="itl-progress">
+          <div class="itl-step" data-step="sca"><span class="itl-dot"></span>Search SCA Auction</div>
+          <div class="itl-step" data-step="vin"><span class="itl-dot"></span>Get full VIN</div>
+          <div class="itl-step" data-step="toyota-open"><span class="itl-dot"></span>Open Toyota spec page</div>
+          <div class="itl-step" data-step="toyota-submit"><span class="itl-dot"></span>Authorize</div>
+          <div class="itl-step" data-step="toyota-wait"><span class="itl-dot"></span>Fetch spec data</div>
+          <div class="itl-step" data-step="toyota-harvest"><span class="itl-dot"></span>Extract specs</div>
+        </div>
+      </div>`;
+
+    const start = performance.now();
+    const timerEl = tile.querySelector('.itl-timer');
+    tile._timerId = setInterval(() => {
+      timerEl.textContent = ((performance.now() - start) / 1000).toFixed(3) + 's';
+    }, 50);
+    tile._stopTimer = () => {
+      if (tile._timerId) { clearInterval(tile._timerId); tile._timerId = null; }
+      timerEl.textContent = ((performance.now() - start) / 1000).toFixed(3) + 's';
+    };
+    return tile;
+  }
+
+  function renderInlineResult(tile, resp) {
+    tile._stopTimer?.();
+    const body = tile.querySelector('.itl-tile-body');
+
+    if (!resp.success) {
+      body.innerHTML = `<div class="itl-error">${esc(resp.error)}</div>`;
+      return;
+    }
+
+    const { vin, specs } = resp.data;
+    const basics  = specs?.basics  || [];
+    const options = specs?.options || [];
+
+    const basicsRows = [
+      { label: 'VIN', value: vin, mono: true },
+      ...basics.map(s => {
+        const i = s.indexOf(':');
+        return { label: s.slice(0, i).trim(), value: s.slice(i + 1).trim() };
+      })
+    ];
+
+    const rowsHtml = basicsRows.map(r => `
+      <li class="data-list__item">
+        <span class="data-list__label">${esc(r.label)}:</span>
+        <span class="data-list__value text-bold${r.mono ? ' itl-mono' : ''}">${esc(r.value)}</span>
+      </li>`).join('');
+
+    // Surface a Toyota-side error (the SCA part already gave us the VIN above)
+    const errorHtml = specs?.error
+      ? `<div class="itl-section-divider"></div><div class="itl-error">${esc(specs.error)}</div>`
+      : '';
+
+    let optionsHtml = '';
+    if (options.length) {
+      const items = options.map(o => {
+        const m = o.match(/^([A-Z0-9]{2,3})\s+(.+)$/);
+        const code = m ? m[1] : '';
+        // Add space after commas that have no space (e.g. "Touchscreen,Dynamic" → "Touchscreen, Dynamic")
+        const text = (m ? m[2] : o).replace(/,(\S)/g, ', $1');
+        return code
+          ? `<li class="itl-option"><span class="itl-option-code">${esc(code)}</span><span class="itl-option-text">${esc(text)}</span></li>`
+          : `<li class="itl-option"><span class="itl-option-text">${esc(text)}</span></li>`;
+      }).join('');
+      optionsHtml = `
+        <div class="itl-section-divider"></div>
+        <h3 class="itl-subhead">Factory Options</h3>
+        <ul class="itl-options">${items}</ul>`;
+    }
+
+    body.innerHTML = `
+      <ul class="data-list data-list--details">${rowsHtml}</ul>
+      ${errorHtml}
+      ${optionsHtml}`;
+  }
+
+  function runInlineLookup(stock, tile) {
+    let port;
+    try {
+      port = chrome.runtime.connect({ name: 'LOOKUP_SPECS' });
+    } catch (err) {
+      renderInlineResult(tile, { success: false, error: 'Extension was reloaded — please refresh this page and try again.' });
+      return;
+    }
+
+    port.onMessage.addListener(msg => {
+      if (msg.type === 'progress') {
+        updateProgress(tile, msg.step, { vin: msg.vin });
+      } else if (msg.type === 'result') {
+        renderInlineResult(tile, msg);
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (chrome.runtime.lastError && tile.isConnected && tile._timerId) {
+        renderInlineResult(tile, { success: false, error: 'Extension was reloaded — please refresh this page and try again.' });
+      }
+    });
+
+    port.postMessage({ type: 'start', stockNumber: stock });
+  }
+
+  // ── Lookup (listing-page popup) ───────────────────────────────────────────
 
   function doLookup(stock, btn) {
     if (btn.disabled) return;
@@ -198,8 +341,8 @@
       if (msg.type === 'progress') {
         updateProgress(panel, msg.step, { vin: msg.vin });
       } else if (msg.type === 'result') {
-        // Carry forward the VIN we already showed live, so showResult doesn't have to re-render it
-        showResult(msg, btn);
+        const elapsed = panel._stopTimer?.();
+        showResult(msg, btn, elapsed);
         btn.disabled = false;
       }
     });
@@ -207,7 +350,8 @@
     port.onDisconnect.addListener(() => {
       btn.disabled = false;
       if (chrome.runtime.lastError && document.body.contains(panel)) {
-        showResult({ success: false, error: 'Extension was reloaded — please refresh this IAAI page and try again.' }, btn);
+        const elapsed = panel._stopTimer?.();
+        showResult({ success: false, error: 'Extension was reloaded — please refresh this IAAI page and try again.' }, btn, elapsed);
       }
     });
 
@@ -221,12 +365,19 @@
 
     const stock = getStockNumber();
     if (!stock || processed.has('detail-' + stock)) return;
+
+    // Mount our inline tile next to IAAI's native tiles. The sidebar is populated
+    // by the page's own JS, so retry briefly if it isn't ready yet.
+    const firstTile = document.querySelector('.tile.tile--data');
+    if (!firstTile) {
+      setTimeout(handleDetailPage, 300);
+      return;
+    }
     processed.add('detail-' + stock);
 
-    // Find the h1 heading to attach the button
-    const anchor = document.querySelector('h1') || document.body;
-    if (anchor.querySelector('.itl-btn')) return;
-    anchor.appendChild(makeButton(stock));
+    const tile = makeInlineTile();
+    firstTile.parentElement.insertBefore(tile, firstTile.nextSibling);
+    runInlineLookup(stock, tile);
   }
 
   function handleListingPage() {

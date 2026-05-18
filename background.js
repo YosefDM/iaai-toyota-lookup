@@ -43,10 +43,6 @@ function openTab(url) {
   });
 }
 
-function navigateTab(tabId, url) {
-  return new Promise(resolve => chrome.tabs.update(tabId, { url }, resolve));
-}
-
 function waitForTabLoad(tabId, timeout = 30000) {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
@@ -70,6 +66,13 @@ function sleep(ms) {
 
 function runScript(tabId, func, args = []) {
   return chrome.scripting.executeScript({ target: { tabId }, func, args })
+    .then(res => res[0]?.result ?? null);
+}
+
+// MAIN world: runs in the page's JS context — needed to access page globals
+// like grecaptcha that aren't exposed to the isolated content-script world.
+function runInPage(tabId, func, args = []) {
+  return chrome.scripting.executeScript({ target: { tabId }, func, args, world: 'MAIN' })
     .then(res => res[0]?.result ?? null);
 }
 
@@ -111,128 +114,133 @@ function findDetailPath(html) {
 }
 
 // ── Toyota Owners Spec Page ──────────────────────────────────────────────────
+// The /v1/vehicle/detailed-specs API requires a freshly-generated reCAPTCHA
+// Enterprise token, which can only be produced in the page context where
+// grecaptcha.enterprise is loaded. So we still open a Toyota tab — but we
+// skip the form-fill/click/SPA-render dance and call the API directly.
 
 async function getToyotaSpecs(vin, onProgress = () => {}) {
   onProgress({ step: 'toyota-open', message: 'Opening Toyota spec page…' });
   const tab = await openTab('https://www.toyota.com/owners/vehicle-specification/');
   try {
     await waitForTabLoad(tab.id);
+    // The Toyota spec page may bounce through account.toyota.com to refresh the
+    // session before settling back on www.toyota.com. We don't have host
+    // permission for account.toyota.com, so wait for the redirect to settle.
     await sleep(4000);
 
-    const currentUrl = await runScript(tab.id, () => location.href);
-    if (currentUrl && currentUrl.includes('account.toyota.com')) {
+    let currentUrl;
+    try {
+      currentUrl = await runScript(tab.id, () => location.href);
+    } catch (e) {
+      throw new Error(
+        'Toyota owners portal requires login.\n\n' +
+        'Please log in at toyota.com/owners, then try again.'
+      );
+    }
+    if (!currentUrl || currentUrl.includes('account.toyota.com')) {
       throw new Error(
         'Toyota owners portal requires login.\n\n' +
         'Please log in at toyota.com/owners, then try again.'
       );
     }
 
-    onProgress({ step: 'toyota-submit', message: 'Submitting VIN to Toyota…' });
-    const fillResult = await runScript(tab.id, toyotaFillAndSubmit, [vin]);
-    if (fillResult === 'NOT_FOUND') {
-      throw new Error('Could not find the VIN input or Submit button on the Toyota spec page.');
-    }
+    onProgress({ step: 'toyota-submit', message: 'Authorizing with Toyota…' });
+    await waitForToyotaReady(tab.id);
 
-    onProgress({ step: 'toyota-wait', message: 'Waiting for spec data…' });
-    // Page has 4 empty container shells before submit — poll for .trow content instead.
-    const DEADLINE = Date.now() + 60000;
-    while (Date.now() < DEADLINE) {
-      await sleep(500);
-      try {
-        const trows = await runScript(tab.id, () =>
-          document.querySelectorAll('.to-vehicle-specs__table-container .trow').length
-        );
-        if (trows >= 5) break;
-      } catch (_) {
-        // tab briefly unavailable — keep waiting
-      }
+    onProgress({ step: 'toyota-wait', message: 'Fetching spec data…' });
+    const result = await runInPage(tab.id, toyotaApiCall, [vin]);
+    if (!result) throw new Error('Toyota API call returned no result (script may have been blocked).');
+    if (result.error === 'NO_TOKEN') {
+      throw new Error(
+        'Toyota owners portal requires login.\n\n' +
+        'Please log in at toyota.com/owners, then try again.'
+      );
     }
+    if (result.error) throw new Error(result.error);
+    if (!result.data) throw new Error('Toyota API returned no spec data for this VIN.');
 
     onProgress({ step: 'toyota-harvest', message: 'Extracting results…' });
-    return await runScript(tab.id, toyotaHarvest);
+    return toyotaTransform(result.data);
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
   }
 }
 
-// Injected into Toyota spec page — finds input, fills VIN, clicks Submit, returns immediately.
-// Returns 'OK' on success or 'NOT_FOUND' if elements are missing after waiting.
-function toyotaFillAndSubmit(vin) {
-  const TIMEOUT = 20000;
-  const start = Date.now();
-
-  function setVal(input, value) {
-    const proto = Object.getPrototypeOf(input);
-    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc?.set) desc.set.call(input, value);
-    else input.value = value;
-    ['input', 'change'].forEach(t => input.dispatchEvent(new Event(t, { bubbles: true })));
-  }
-
-  function findInput() {
-    for (const s of ['input[placeholder*="VIN" i]', 'input[placeholder*="17" i]',
-      'input[name="vin" i]', 'input[id*="vin" i]', 'input[type="text"]']) {
-      const el = document.querySelector(s);
-      if (el?.offsetParent !== null) return el;
+// Wait for both grecaptcha.enterprise and the id_token cookie to be available.
+// Must use MAIN world — grecaptcha is on the page's window, not in the
+// isolated content-script world.
+async function waitForToyotaReady(tabId, timeout = 20000) {
+  const deadline = Date.now() + timeout;
+  let lastErr;
+  while (Date.now() < deadline) {
+    try {
+      const ready = await runInPage(tabId, () =>
+        typeof window.grecaptcha?.enterprise?.execute === 'function' &&
+        document.cookie.includes('id_token=')
+      );
+      if (ready) return;
+    } catch (e) {
+      // Tab may be mid-redirect through account.toyota.com — keep waiting.
+      lastErr = e;
     }
-    return null;
+    await sleep(250);
   }
-
-  function findButton() {
-    for (const el of document.querySelectorAll('a, button')) {
-      if (el.offsetParent !== null && /^submit/i.test(el.textContent.trim())) return el;
-    }
-    return null;
+  if (lastErr && /Cannot access/i.test(lastErr.message)) {
+    throw new Error(
+      'Toyota owners portal requires login.\n\n' +
+      'Please log in at toyota.com/owners, then try again.'
+    );
   }
-
-  return new Promise(resolve => {
-    function tryFill() {
-      if (Date.now() - start > TIMEOUT) return resolve('NOT_FOUND');
-      const input = findInput();
-      const btn   = findButton();
-      if (input && btn) {
-        setVal(input, vin);
-        setTimeout(() => { btn.click(); resolve('OK'); }, 700);
-      } else {
-        setTimeout(tryFill, 500);
-      }
-    }
-    tryFill();
-  });
+  throw new Error('Toyota page never finished loading reCAPTCHA — try again.');
 }
 
-// Injected into Toyota spec page after results have loaded — extracts options.
-// Page uses .to-vehicle-specs__table-container sections with .trow/.tcol structure.
-function toyotaHarvest() {
-  const containers = Array.from(document.querySelectorAll('.to-vehicle-specs__table-container'));
-  if (!containers.length) {
-    return { basics: [], options: [], pageTitle: document.title, url: location.href };
-  }
+// Injected into the Toyota tab — generates a captcha token and calls the API.
+// Returns { data: VehicleSpecDetailResponse } or { error: string }.
+function toyotaApiCall(vin) {
+  return (async () => {
+    try {
+      const submitLink = document.querySelector('a[data-site-key]');
+      const siteKey = submitLink?.getAttribute('data-site-key');
+      const action  = submitLink?.getAttribute('data-action') || 'login';
+      if (!siteKey) return { error: 'Could not find reCAPTCHA site key on the Toyota page.' };
 
-  const basics  = [];
-  const options  = [];
+      const idToken = document.cookie.split('; ').find(c => c.startsWith('id_token='))?.slice(9);
+      if (!idToken) return { error: 'NO_TOKEN' };
 
-  for (const c of containers) {
-    const text = c.innerText || '';
-    const rows = Array.from(c.querySelectorAll('.trow'));
+      const captchaToken = await window.grecaptcha.enterprise.execute(siteKey, { action });
 
-    if (/port or factory/i.test(text)) {
-      // Single-column rows: item names, then their source labels (Factory/Port) — skip source labels
-      for (const row of rows) {
-        const cols = Array.from(row.querySelectorAll('.tcol')).map(el => el.textContent.trim());
-        const val = cols[0];
-        if (val && !/^(factory|port)$/i.test(val)) options.push(val);
+      const res = await fetch('https://prod.webservices.toyota.com/v1/vehicle/detailed-specs', {
+        method: 'POST',
+        headers: {
+          'authorization': idToken,
+          'x-brand': 'T',
+          'x-client': 'TCOM',
+          'x-domain-token': captchaToken,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ vin })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        return { error: `Toyota API ${res.status}: ${text.substring(0, 300)}` };
       }
 
-    } else if (/basic vehicle/i.test(text)) {
-      for (const row of rows) {
-        const cols = Array.from(row.querySelectorAll('.tcol')).map(el => el.textContent.trim());
-        if (cols.length >= 2 && /^(grade|drive.?train)$/i.test(cols[0])) {
-          basics.push(`${cols[0]}: ${cols[1]}`);
-        }
-      }
+      const json = await res.json();
+      return { data: json?.data?.VehicleSpecDetailResponse ?? null };
+    } catch (err) {
+      return { error: err?.message || String(err) };
     }
-  }
+  })();
+}
 
-  return { basics, options, pageTitle: document.title, url: location.href };
+// Map the API JSON into the existing { basics, options } shape the panel renders.
+function toyotaTransform(d) {
+  if (!d) return { basics: [], options: [] };
+  const basics = [];
+  if (d.vehicleGrade)     basics.push(`Grade: ${d.vehicleGrade}`);
+  if (d.vehicleDriveType) basics.push(`Drive Train: ${d.vehicleDriveType}`);
+  const options = Array.isArray(d.installationSource) ? d.installationSource.slice() : [];
+  return { basics, options };
 }
