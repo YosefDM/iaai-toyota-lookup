@@ -115,8 +115,8 @@
   function renderSpecs(specs) {
     if (!specs) return '<div class="itl-note">Toyota spec lookup returned no data.</div>';
     let html = '';
-    if (specs.options?.length)  html += section('Vehicle Info & Factory Options', specs.options);
-    if (specs.packages?.length) html += section('Standard Equipment', specs.packages);
+    if (specs.basics?.length)  html += section('Grade & Drive Train', specs.basics);
+    if (specs.options?.length) html += section('Factory Options', specs.options);
     if (!html) html = `<div class="itl-note">No spec data found.<br>
       Try visiting <a href="https://www.toyota.com/owners/vehicle-specification/" target="_blank">toyota.com/owners/vehicle-specification</a> with the VIN above.</div>`;
     return html;
@@ -157,7 +157,10 @@
       const resp = await chrome.runtime.sendMessage({ type: 'LOOKUP_SPECS', stockNumber: stock });
       showResult(resp, btn);
     } catch (err) {
-      showResult({ success: false, error: err.message }, btn);
+      const msg = /context invalidated/i.test(err.message)
+        ? 'Extension was reloaded — please refresh this IAAI page and try again.'
+        : err.message;
+      showResult({ success: false, error: msg }, btn);
     } finally {
       btn.disabled = false;
     }

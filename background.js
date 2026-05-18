@@ -150,20 +150,26 @@ async function getToyotaSpecs(vin) {
     }
 
     // Phase 1: fill VIN and click Submit — short script, returns immediately.
-    // Must NOT be a long-running Promise: clicking <a href="#"> destroys the injected context.
     const fillResult = await runScript(tab.id, toyotaFillAndSubmit, [vin]);
     if (fillResult === 'NOT_FOUND') {
       throw new Error('Could not find the VIN input or Submit button on the Toyota spec page.');
     }
 
-    // Phase 2: service worker polls until results appear (avoids context-destruction problem)
+    // Phase 2: service worker polls until results appear.
+    // The page has 4 empty container shells before any VIN is submitted —
+    // container count is always >= 3 at load time, so we must wait for .trow
+    // elements to appear inside them (populated only after the API responds).
     const DEADLINE = Date.now() + 60000;
     while (Date.now() < DEADLINE) {
       await sleep(500);
-      const count = await runScript(tab.id, () =>
-        document.querySelectorAll('.to-vehicle-specs__table-container').length
-      );
-      if (count >= 3) break;
+      try {
+        const trows = await runScript(tab.id, () =>
+          document.querySelectorAll('.to-vehicle-specs__table-container .trow').length
+        );
+        if (trows >= 5) break;
+      } catch (_) {
+        // tab briefly unavailable — keep waiting
+      }
     }
 
     // Phase 3: harvest — short script
@@ -219,15 +225,15 @@ function toyotaFillAndSubmit(vin) {
   });
 }
 
-// Injected into Toyota spec page after results have loaded — extracts packages/options.
+// Injected into Toyota spec page after results have loaded — extracts options.
 // Page uses .to-vehicle-specs__table-container sections with .trow/.tcol structure.
 function toyotaHarvest() {
   const containers = Array.from(document.querySelectorAll('.to-vehicle-specs__table-container'));
   if (!containers.length) {
-    return { packages: [], options: [], pageTitle: document.title, url: location.href };
+    return { basics: [], options: [], pageTitle: document.title, url: location.href };
   }
 
-  const packages = [];
+  const basics  = [];
   const options  = [];
 
   for (const c of containers) {
@@ -242,27 +248,15 @@ function toyotaHarvest() {
         if (val && !/^(factory|port)$/i.test(val)) options.push(val);
       }
 
-    } else if (/standard installation/i.test(text)) {
-      // Two-column rows: [category, description]
-      for (const row of rows) {
-        const cols = Array.from(row.querySelectorAll('.tcol')).map(el => el.textContent.trim());
-        if (cols.length >= 2 && cols[0] && cols[1]) {
-          packages.push(`${cols[0]}: ${cols[1]}`);
-        } else if (cols.length === 1 && cols[0]) {
-          packages.push(cols[0]);
-        }
-      }
-
     } else if (/basic vehicle/i.test(text)) {
-      // Two-column rows: [label, value] — include Grade, Exterior, Interior, Engine, Drive Train
       for (const row of rows) {
         const cols = Array.from(row.querySelectorAll('.tcol')).map(el => el.textContent.trim());
-        if (cols.length >= 2 && /grade|exterior|interior|engine|drive.?train|transmission/i.test(cols[0])) {
-          options.push(`${cols[0]}: ${cols[1]}`);
+        if (cols.length >= 2 && /^(grade|drive.?train)$/i.test(cols[0])) {
+          basics.push(`${cols[0]}: ${cols[1]}`);
         }
       }
     }
   }
 
-  return { packages, options, pageTitle: document.title, url: location.href };
+  return { basics, options, pageTitle: document.title, url: location.href };
 }
