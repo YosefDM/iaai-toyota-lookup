@@ -1,15 +1,22 @@
 // background.js — service worker
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'LOOKUP_SPECS') {
-    performLookup(message.stockNumber)
-      .then(result => sendResponse({ success: true, data: result }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
-    return true; // keep channel open for async response
-  }
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'LOOKUP_SPECS') return;
+  port.onMessage.addListener(msg => {
+    if (msg.type !== 'start') return;
+    performLookup(msg.stockNumber, step => safePost(port, { type: 'progress', ...step }))
+      .then(data => safePost(port, { type: 'result', success: true, data }))
+      .catch(err => safePost(port, { type: 'result', success: false, error: err.message }))
+      .finally(() => { try { port.disconnect(); } catch (_) {} });
+  });
 });
 
-async function performLookup(stockNumber) {
+function safePost(port, msg) {
+  try { port.postMessage(msg); } catch (_) {}
+}
+
+async function performLookup(stockNumber, onProgress) {
+  onProgress({ step: 'sca', message: 'Searching SCA Auction…' });
   const vin = await getVINFromSCA(stockNumber);
   if (!vin) {
     throw new Error(
@@ -17,7 +24,10 @@ async function performLookup(stockNumber) {
       'Make sure you are logged in to sca.auction in Chrome, then try again.'
     );
   }
-  const specs = await getToyotaSpecs(vin).catch(err => ({ error: err.message }));
+  onProgress({ step: 'vin', vin, message: `Got VIN: ${vin}` });
+
+  onProgress({ step: 'toyota', message: 'Looking up Toyota factory specs…' });
+  const specs = await getToyotaSpecs(vin, onProgress).catch(err => ({ error: err.message }));
   return { vin, specs };
 }
 
@@ -64,83 +74,51 @@ function runScript(tabId, func, args = []) {
 }
 
 // ── SCA Auction — get full VIN ───────────────────────────────────────────────
+// SCA does server-side rendering, so we can fetch() both pages directly from
+// the service worker. credentials: 'include' sends the user's session cookies,
+// which is what makes the full VIN visible (logged-out users see a masked VIN).
 
 async function getVINFromSCA(stockNumber) {
-  const tab = await openTab(`https://sca.auction/en/search?search_query=${encodeURIComponent(stockNumber)}`);
-  try {
-    await waitForTabLoad(tab.id);
-    await sleep(4000); // wait for React to render
+  // Phase 1: fetch search results and find the detail page URL
+  const searchHtml = await scaFetch(
+    `https://sca.auction/en/search?search_query=${encodeURIComponent(stockNumber)}`
+  );
+  const detailPath = findDetailPath(searchHtml);
+  if (!detailPath) return null;
 
-    // Phase 1: find the vehicle detail URL for this stock number
-    const vehicleUrl = await runScript(tab.id, scaFindVehicleLink, [stockNumber]);
-    if (!vehicleUrl) return null;
-
-    // Phase 2: navigate to the vehicle detail page
-    await navigateTab(tab.id, vehicleUrl);
-    await waitForTabLoad(tab.id);
-    await sleep(3000);
-
-    // Phase 3: extract the full VIN (only visible when logged in)
-    return await runScript(tab.id, scaExtractFullVin);
-
-  } finally {
-    chrome.tabs.remove(tab.id).catch(() => {});
-  }
-}
-
-// Injected into SCA search results — finds detail page URL for the given stock number.
-// When logged in, item numbers are NOT masked (shows "45045241" not "45******"),
-// so we can find the exact match.
-function scaFindVehicleLink(stockNumber) {
-  // Collect all article/card elements that are vehicle listings
-  const cards = Array.from(document.querySelectorAll('article, li[class*="vehicle"], li[class*="result"]'));
-
-  for (const card of cards) {
-    const text = card.innerText || card.textContent || '';
-    // Exact item number match (only visible when logged in)
-    if (text.includes(stockNumber)) {
-      const link = card.querySelector('a[href*="/en/"]');
-      if (link) return link.href;
-    }
-  }
-
-  // Fallback: look at ALL links — if exactly one unique vehicle detail link exists, use it
-  const links = [...new Set(
-    Array.from(document.querySelectorAll('a[href]'))
-      .map(a => a.href)
-      .filter(h => /sca\.auction\/en\/\d{9,}/.test(h))
-  )];
-  if (links.length === 1) return links[0];
-
-  return null;
-}
-
-// Injected into SCA vehicle detail page — extracts full 17-char VIN.
-// Returns null when not logged in (only partial VIN visible).
-function scaExtractFullVin() {
+  // Phase 2: fetch detail page and extract VIN
+  const detailHtml = await scaFetch(`https://sca.auction${detailPath}`);
   const VIN_RE = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
-  return new Promise(resolve => {
-    let tries = 0;
-    function check() {
-      tries++;
-      const matches = (document.body.innerText || '').match(VIN_RE);
-      if (matches?.length) return resolve(matches[0]);
-      if (tries < 40) setTimeout(check, 250);
-      else resolve(null);
-    }
-    check();
+  return detailHtml.match(VIN_RE)?.[0] ?? null;
+}
+
+async function scaFetch(url) {
+  const res = await fetch(url, {
+    credentials: 'include',
+    headers: { 'Accept': 'text/html' }
   });
+  if (!res.ok) throw new Error(`SCA returned ${res.status} for ${url}`);
+  return res.text();
+}
+
+// Find the vehicle detail path (e.g. /en/1059458574-2025-toyota-camry) from search HTML.
+// Detail URLs are 9+ digit SCA IDs, not the IAAI stock number.
+function findDetailPath(html) {
+  const matches = [...new Set(
+    [...html.matchAll(/href="(\/en\/\d{9,}[^"]*)"/g)].map(m => m[1])
+  )];
+  return matches[0] ?? null;
 }
 
 // ── Toyota Owners Spec Page ──────────────────────────────────────────────────
 
-async function getToyotaSpecs(vin) {
+async function getToyotaSpecs(vin, onProgress = () => {}) {
+  onProgress({ step: 'toyota-open', message: 'Opening Toyota spec page…' });
   const tab = await openTab('https://www.toyota.com/owners/vehicle-specification/');
   try {
     await waitForTabLoad(tab.id);
     await sleep(4000);
 
-    // Check if we were redirected to the login page
     const currentUrl = await runScript(tab.id, () => location.href);
     if (currentUrl && currentUrl.includes('account.toyota.com')) {
       throw new Error(
@@ -149,16 +127,14 @@ async function getToyotaSpecs(vin) {
       );
     }
 
-    // Phase 1: fill VIN and click Submit — short script, returns immediately.
+    onProgress({ step: 'toyota-submit', message: 'Submitting VIN to Toyota…' });
     const fillResult = await runScript(tab.id, toyotaFillAndSubmit, [vin]);
     if (fillResult === 'NOT_FOUND') {
       throw new Error('Could not find the VIN input or Submit button on the Toyota spec page.');
     }
 
-    // Phase 2: service worker polls until results appear.
-    // The page has 4 empty container shells before any VIN is submitted —
-    // container count is always >= 3 at load time, so we must wait for .trow
-    // elements to appear inside them (populated only after the API responds).
+    onProgress({ step: 'toyota-wait', message: 'Waiting for spec data…' });
+    // Page has 4 empty container shells before submit — poll for .trow content instead.
     const DEADLINE = Date.now() + 60000;
     while (Date.now() < DEADLINE) {
       await sleep(500);
@@ -172,7 +148,7 @@ async function getToyotaSpecs(vin) {
       }
     }
 
-    // Phase 3: harvest — short script
+    onProgress({ step: 'toyota-harvest', message: 'Extracting results…' });
     return await runScript(tab.id, toyotaHarvest);
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});

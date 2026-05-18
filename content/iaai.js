@@ -61,15 +61,47 @@
     removePanel();
     const p = mkPanel(`
       <div class="itl-head">Toyota Specs Lookup <button class="itl-close">✕</button></div>
-      <div class="itl-body itl-center">
-        <div class="itl-spinner"></div>
-        <div class="itl-status">Fetching VIN from SCA Auction + Toyota specs…<br>
-          <small style="opacity:.7">(Both sites require you to be logged in)</small></div>
+      <div class="itl-body">
+        <div class="itl-vin-slot"></div>
+        <div class="itl-progress">
+          <div class="itl-step" data-step="sca"><span class="itl-dot"></span>Search SCA Auction</div>
+          <div class="itl-step" data-step="vin"><span class="itl-dot"></span>Get full VIN</div>
+          <div class="itl-step" data-step="toyota-open"><span class="itl-dot"></span>Open Toyota spec page</div>
+          <div class="itl-step" data-step="toyota-submit"><span class="itl-dot"></span>Submit VIN</div>
+          <div class="itl-step" data-step="toyota-wait"><span class="itl-dot"></span>Wait for results</div>
+          <div class="itl-step" data-step="toyota-harvest"><span class="itl-dot"></span>Extract specs</div>
+        </div>
       </div>`);
     place(p, anchor);
     p.querySelector('.itl-close').onclick = removePanel;
     document.body.appendChild(p);
     return p;
+  }
+
+  // Step state machine: prior steps are "done", current is "active", later are "pending"
+  const STEP_ORDER = ['sca', 'vin', 'toyota-open', 'toyota-submit', 'toyota-wait', 'toyota-harvest'];
+
+  function updateProgress(panel, step, extra) {
+    if (!panel) return;
+    const idx = STEP_ORDER.indexOf(step);
+    if (idx < 0) return;
+    panel.querySelectorAll('.itl-step').forEach((el, i) => {
+      el.classList.remove('done', 'active', 'pending');
+      el.classList.add(i < idx ? 'done' : i === idx ? 'active' : 'pending');
+    });
+    if (extra?.vin) {
+      panel.querySelector('.itl-vin-slot').innerHTML = `
+        <div class="itl-vin-row">
+          <span class="itl-label">Full VIN</span>
+          <span class="itl-vin">${esc(extra.vin)}</span>
+          <button class="itl-copy" data-val="${esc(extra.vin)}">Copy</button>
+        </div>`;
+      panel.querySelector('.itl-copy').addEventListener('click', function () {
+        navigator.clipboard.writeText(this.dataset.val);
+        this.textContent = 'Copied!';
+        setTimeout(() => (this.textContent = 'Copy'), 2000);
+      });
+    }
   }
 
   function showResult(resp, anchor) {
@@ -149,21 +181,37 @@
 
   // ── Lookup ────────────────────────────────────────────────────────────────
 
-  async function doLookup(stock, btn) {
+  function doLookup(stock, btn) {
     if (btn.disabled) return;
     btn.disabled = true;
     const panel = showLoading(btn);
+    let port;
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'LOOKUP_SPECS', stockNumber: stock });
-      showResult(resp, btn);
+      port = chrome.runtime.connect({ name: 'LOOKUP_SPECS' });
     } catch (err) {
-      const msg = /context invalidated/i.test(err.message)
-        ? 'Extension was reloaded — please refresh this IAAI page and try again.'
-        : err.message;
-      showResult({ success: false, error: msg }, btn);
-    } finally {
+      showResult({ success: false, error: 'Extension was reloaded — please refresh this IAAI page and try again.' }, btn);
       btn.disabled = false;
+      return;
     }
+
+    port.onMessage.addListener(msg => {
+      if (msg.type === 'progress') {
+        updateProgress(panel, msg.step, { vin: msg.vin });
+      } else if (msg.type === 'result') {
+        // Carry forward the VIN we already showed live, so showResult doesn't have to re-render it
+        showResult(msg, btn);
+        btn.disabled = false;
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      btn.disabled = false;
+      if (chrome.runtime.lastError && document.body.contains(panel)) {
+        showResult({ success: false, error: 'Extension was reloaded — please refresh this IAAI page and try again.' }, btn);
+      }
+    });
+
+    port.postMessage({ type: 'start', stockNumber: stock });
   }
 
   // ── IAAI page handlers ────────────────────────────────────────────────────

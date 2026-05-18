@@ -155,6 +155,42 @@
 }
 .itl-status { color: #555; font-size: 12px; }
 
+/* ── Live progress steps ──────────────────────────────────────────────────── */
+.itl-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 4px;
+}
+.itl-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: #999;
+  transition: color 0.15s;
+}
+.itl-step .itl-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ddd;
+  flex-shrink: 0;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.itl-step.done           { color: #2b6e2b; }
+.itl-step.done .itl-dot  { background: #5ba55b; }
+.itl-step.active         { color: #111; font-weight: 600; }
+.itl-step.active .itl-dot {
+  background: #eb0a1e;
+  box-shadow: 0 0 0 4px rgba(235,10,30,.18);
+  animation: itl-pulse 1.1s ease-in-out infinite;
+}
+.itl-step.pending        { color: #aaa; }
+@keyframes itl-pulse {
+  50% { box-shadow: 0 0 0 7px rgba(235,10,30,.05); }
+}
+
 /* ── Spinner ──────────────────────────────────────────────────────────────── */
 .itl-spinner {
   width: 34px;
