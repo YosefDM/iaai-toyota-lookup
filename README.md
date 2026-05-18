@@ -10,7 +10,7 @@
 
 IAAI lists Toyota vehicles with a partial VIN. This Chrome extension pulls the full VIN from SCA Auction and the factory equipment list from `toyota.com/owners/vehicle-specification` — and shows everything inline next to IAAI's native info tiles, with a live progress checklist and millisecond timer.
 
-![Toyota Factory Specs tile rendered inline on an IAAI vehicle detail page](screenshots/demo.png)
+![Toyota Factory Specs tile rendered inline on an IAAI vehicle detail page](screenshots/demo-v2.png)
 
 ## What it does
 
