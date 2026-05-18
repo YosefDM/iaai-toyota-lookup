@@ -1,0 +1,170 @@
+/* ── Lookup button ─────────────────────────────────────────────────────────── */
+.itl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eb0a1e;
+  color: #fff;
+  border: none;
+  padding: 5px 11px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  cursor: pointer;
+  margin: 4px 0 4px 8px;
+  vertical-align: middle;
+  white-space: nowrap;
+  transition: background 0.15s;
+  line-height: 1.4;
+}
+.itl-btn:hover  { background: #c40918; }
+.itl-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+/* ── Floating panel ────────────────────────────────────────────────────────── */
+.itl-panel {
+  position: absolute;
+  z-index: 2147483647;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 6px 28px rgba(0,0,0,.22);
+  width: 420px;
+  max-height: 560px;
+  overflow-y: auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  color: #222;
+}
+
+.itl-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 14px;
+  background: #eb0a1e;
+  color: #fff;
+  border-radius: 8px 8px 0 0;
+  font-weight: 700;
+  font-size: 14px;
+  position: sticky;
+  top: 0;
+}
+
+.itl-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  opacity: .85;
+}
+.itl-close:hover { opacity: 1; }
+
+.itl-body {
+  padding: 14px;
+}
+.itl-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 14px;
+}
+
+/* ── VIN row ──────────────────────────────────────────────────────────────── */
+.itl-vin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #f4f4f4;
+  border-radius: 6px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+}
+.itl-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: #777;
+  font-weight: 700;
+}
+.itl-vin {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #111;
+}
+.itl-copy {
+  margin-left: auto;
+  background: #e4f0e4;
+  border: 1px solid #5ba55b;
+  color: #2b6e2b;
+  padding: 2px 9px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.itl-copy:hover { background: #c9e4c9; }
+
+/* ── Spec sections ────────────────────────────────────────────────────────── */
+.itl-section { margin-bottom: 13px; }
+.itl-sec-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  font-weight: 700;
+  color: #666;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+.itl-list {
+  margin: 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+.itl-list li {
+  padding: 2px 0;
+  line-height: 1.45;
+  color: #333;
+}
+
+/* ── States ───────────────────────────────────────────────────────────────── */
+.itl-error {
+  background: #fff0f0;
+  border: 1px solid #f5c6cb;
+  border-radius: 5px;
+  padding: 10px 12px;
+  color: #b00020;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.itl-note {
+  color: #666;
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.5;
+  padding: 6px 0;
+}
+.itl-status { color: #555; font-size: 12px; }
+
+/* ── Spinner ──────────────────────────────────────────────────────────────── */
+.itl-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #f0f0f0;
+  border-top: 3px solid #eb0a1e;
+  border-radius: 50%;
+  animation: itl-spin 0.9s linear infinite;
+}
+@keyframes itl-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
